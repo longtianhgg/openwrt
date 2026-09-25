@@ -12,7 +12,7 @@ diff -urN a/arch/arm/boot/dts/rockchip/Makefile b/arch/arm/boot/dts/rockchip/Mak
 diff -urN a/arch/arm/boot/dts/rockchip/rk3288-king3288.dts b/arch/arm/boot/dts/rockchip/rk3288-king3288.dts
 --- a/arch/arm/boot/dts/rockchip/rk3288-king3288.dts	1970-01-01 08:00:00.000000000 +0800
 +++ b/arch/arm/boot/dts/rockchip/rk3288-king3288.dts	2026-09-23 08:49:03.912480240 +0800
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,430 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * KING3288 mainline bring-up device tree
@@ -364,6 +364,7 @@ diff -urN a/arch/arm/boot/dts/rockchip/rk3288-king3288.dts b/arch/arm/boot/dts/r
 +/* Exact GMAC wiring/settings from the vendor rk3288-evb.dtsi. */
 +&gmac {
 +	phy-supply = <&vcc_phy>;
++	phy-handle = <&ethphy>;
 +	phy-mode = "rgmii";
 +	clock_in_out = "input";
 +
@@ -381,6 +382,16 @@ diff -urN a/arch/arm/boot/dts/rockchip/rk3288-king3288.dts b/arch/arm/boot/dts/r
 +	rx_delay = <0x10>;
 +	max-speed = <1000>;
 +	status = "okay";
++
++	mdio0 {
++		compatible = "snps,dwmac-mdio";
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		ethphy: ethernet-phy@0 {
++			reg = <0>;
++		};
++	};
 +};
 +
 +/* Replace vendor FIQ console with the normal DesignWare UART2 driver. */
