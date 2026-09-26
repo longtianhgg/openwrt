@@ -1,0 +1,186 @@
+name: KING3288 OpenWrt Build
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - king3288-25.12.5
+    paths:
+      - '.github/workflows/king3288-build.yml'
+      - '.gitignore'
+      - 'king3288-repro/**'
+      - 'package/king3288-openclash-core/**'
+      - 'target/linux/rockchip/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: king3288-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build KING3288 OpenWrt 25.12.5
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    # OpenWrt 官方 Actions 当前使用的 buildbot 构建环境
+    container:
+      image: ghcr.io/openwrt/buildbot/buildworker-v3.11.8:v23
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Fix source permissions
+        run: chown -R buildbot:buildbot .
+
+      - name: Verify KING3288 IDB
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          IDB="king3288-repro/blobs/king3288-old-idb-miniloader-candidate.bin"
+
+          test -f "$IDB"
+          test "$(wc -c < "$IDB")" = "105472"
+
+          echo \
+            "84c08dd990738c1e935f86206a062aa75effc1148039328b5aa1722db818f8e3  $IDB" \
+            | sha256sum -c -
+
+      - name: Restore pinned feeds
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          cp king3288-repro/feeds.conf feeds.conf
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Apply QuickStart compatibility patch
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          git -C feeds/naspackages apply --check \
+            ../../king3288-repro/patches/0001-quickstart-drop-mdadm-dependency.patch
+
+          git -C feeds/naspackages apply \
+            ../../king3288-repro/patches/0001-quickstart-drop-mdadm-dependency.patch
+
+      - name: Restore pinned external packages
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          ./king3288-repro/prepare-external.sh
+
+          test -f package/luci-app-openclash/Makefile
+          test -f package/luci-theme-argon/Makefile
+
+      - name: Restore KING3288 configuration
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          cp king3288-repro/king3288.diffconfig .config
+          make defconfig
+
+          grep -qx \
+            'CONFIG_TARGET_rockchip_armv7_DEVICE_king3288=y' \
+            .config
+
+          grep -qx \
+            'CONFIG_TARGET_ROOTFS_PARTSIZE=1024' \
+            .config
+
+          grep -qx \
+            'CONFIG_PACKAGE_luci-app-openclash=y' \
+            .config
+
+          grep -qx \
+            'CONFIG_PACKAGE_king3288-openclash-core=y' \
+            .config
+
+          grep -qx \
+            'CONFIG_PACKAGE_luci-theme-argon=y' \
+            .config
+
+          ! grep -qx \
+            'CONFIG_PACKAGE_luci-theme-istorenas=y' \
+            .config
+
+      - name: Download sources
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          make download -j$(nproc)
+
+      - name: Build KING3288 firmware
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          make -j$(nproc) BUILD_LOG=1
+
+      - name: Verify firmware
+        shell: su buildbot -c "sh -e {0}"
+        run: |
+          OUT="bin/targets/rockchip/armv7"
+          IMG="$OUT/openwrt-rockchip-armv7-king3288-ext4-sdcard.img.gz"
+          MANIFEST="$OUT/openwrt-rockchip-armv7-king3288.manifest"
+
+          test -s "$IMG"
+          test -s "$MANIFEST"
+
+          grep -q '^luci-theme-argon - ' "$MANIFEST"
+          grep -q '^luci-app-openclash - 0.47.156' "$MANIFEST"
+          grep -q '^king3288-openclash-core - 1.19.31-r1' "$MANIFEST"
+
+          python3 - "$IMG" <<'PY'
+          import gzip
+          import hashlib
+          import sys
+
+          image = sys.argv[1]
+          expected_size = 105472
+          expected_sha256 = (
+              "84c08dd990738c1e935f86206a062aa75"
+              "effc1148039328b5aa1722db818f8e3"
+          )
+
+          with gzip.open(image, "rb") as f:
+              f.seek(64 * 512)
+              data = f.read(206 * 512)
+
+          if len(data) != expected_size:
+              raise SystemExit(
+                  f"IDB size mismatch: {len(data)} != {expected_size}"
+              )
+
+          digest = hashlib.sha256(data).hexdigest()
+
+          if digest != expected_sha256:
+              raise SystemExit(
+                  f"IDB SHA256 mismatch: {digest}"
+              )
+
+          print(f"IDB_SIZE={len(data)}")
+          print(f"IDB_SHA256={digest}")
+          PY
+
+          sha256sum "$IMG"
+          sha256sum "$IMG" > "$IMG.sha256"
+
+      - name: Upload KING3288 firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: KING3288-OpenWrt-25.12.5-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            bin/targets/rockchip/armv7/openwrt-rockchip-armv7-king3288-ext4-sdcard.img.gz
+            bin/targets/rockchip/armv7/openwrt-rockchip-armv7-king3288-ext4-sdcard.img.gz.sha256
+            bin/targets/rockchip/armv7/openwrt-rockchip-armv7-king3288.manifest
+            bin/targets/rockchip/armv7/profiles.json
+            bin/targets/rockchip/armv7/sha256sums
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: KING3288-build-logs-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: ignore
+          path: logs/

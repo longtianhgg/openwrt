@@ -35,3 +35,7 @@ git-src
 .cproject
 .ccache
 .vscode*
+
+# KING3288 external packages restored by king3288-repro/prepare-external.sh
+/package/luci-app-openclash
+/package/luci-theme-argon
